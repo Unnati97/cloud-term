@@ -4,11 +4,12 @@ import AWS from 'aws-sdk';
 AWS.config.update({
   region: 'us-east-1', // Update with your AWS region
   credentials: new AWS.Credentials(
-    {
-        accessKeyId: 'ASIAZI2LIZICDCU2R3H6', // Update with your access key ID
-        secretAccessKey: 'hYaebq98EUDhNLNhp9I5wvAdq+OcLfe9M8kCGut6', // Update with your secret access key
-        sessionToken: 'IQoJb3JpZ2luX2VjEOX//////////wEaCXVzLXdlc3QtMiJHMEUCIQD+a/M1ZN9yHKetj0GLE4xj2p22IQpGQdJ1S1VgVtiXnwIgbxcNhQuQh9l8w1EpHKczTbYjJU+EVMeJ1OWS7JlQJIkqqQIIHhAAGgw2Mzc0MjM2MzQ5NDgiDKpioWqmSHNd01vKXSqGAmBS+Ecu4LORuNYCHQd0eI6JmwkTZgfP5EcjslX1YLbfWWdU9+XdWk1NB4wev6nvnPvbfVYB5F/yKFicN7+e6c5CKCBIkEZ16NjGx95rRnWtHxShVxSKYHp6iTwCGnI0qKbGOjyv7MJSeSomArKE1MDbbRLZz7fppnaXFnrlfTu1XXRHnxtuLsK3M4fPhoz1aOwN4nuR39QW5rowXIbDCU1NZN2Fs9pRrcKpqG7mZlszkwYYAVOBGq02sHgwNKkwFF3OhbMNaQrpgnvZFbJbZswqikT7RsMRoGKv6nxcAsCuSSbW9HX3JjniAym4jo5UM+8ooKnp9O1b4TmkNa0IWlllzPlreiUwh9rWsAY6nQGQnTD8uob4Svl31p2rGxvJP9Z8Ra9TU9onycjPbcbnAJRiokyinGlPIau4YmnU1ePyJQp7E57/PmvqzLcyctdmFbpDeJSOlQQhevcuhFzkyLZAZsJuzgy599hWS+uJpVmnd5SSXvX6QK/3V7XqcRIXhoyPSqiDRAIolYEYvSym9ac/JAt8BxdDne7NPNIy1WvuGREqKeMZz2+SU6Tp' // Use the access token as the session token
-    }), // Update with your IAM credentials
+//    {
+//        accessKeyId: 'ASIAZI2LIZICDCU2R3H6', // Update with your access key ID
+//        secretAccessKey: 'hYaebq98EUDhNLNhp9I5wvAdq+OcLfe9M8kCGut6', // Update with your secret access key
+//        sessionToken: 'IQoJb3JpZ2luX2VjEOX//////////wEaCXVzLXdlc3QtMiJHMEUCIQD+a/M1ZN9yHKetj0GLE4xj2p22IQpGQdJ1S1VgVtiXnwIgbxcNhQuQh9l8w1EpHKczTbYjJU+EVMeJ1OWS7JlQJIkqqQIIHhAAGgw2Mzc0MjM2MzQ5NDgiDKpioWqmSHNd01vKXSqGAmBS+Ecu4LORuNYCHQd0eI6JmwkTZgfP5EcjslX1YLbfWWdU9+XdWk1NB4wev6nvnPvbfVYB5F/yKFicN7+e6c5CKCBIkEZ16NjGx95rRnWtHxShVxSKYHp6iTwCGnI0qKbGOjyv7MJSeSomArKE1MDbbRLZz7fppnaXFnrlfTu1XXRHnxtuLsK3M4fPhoz1aOwN4nuR39QW5rowXIbDCU1NZN2Fs9pRrcKpqG7mZlszkwYYAVOBGq02sHgwNKkwFF3OhbMNaQrpgnvZFbJbZswqikT7RsMRoGKv6nxcAsCuSSbW9HX3JjniAym4jo5UM+8ooKnp9O1b4TmkNa0IWlllzPlreiUwh9rWsAY6nQGQnTD8uob4Svl31p2rGxvJP9Z8Ra9TU9onycjPbcbnAJRiokyinGlPIau4YmnU1ePyJQp7E57/PmvqzLcyctdmFbpDeJSOlQQhevcuhFzkyLZAZsJuzgy599hWS+uJpVmnd5SSXvX6QK/3V7XqcRIXhoyPSqiDRAIolYEYvSym9ac/JAt8BxdDne7NPNIy1WvuGREqKeMZz2+SU6Tp' // Use the access token as the session token
+//    }
+    ), // Update with your IAM credentials
 });
 
 const lexruntime = new AWS.LexRuntime();
