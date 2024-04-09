@@ -1,0 +1,959 @@
+AWSTemplateFormatVersion: '2024-04-01'
+Description: JobNestCrudAPIs
+
+#Predefine parameters
+Parameters:
+  Stage:
+    Type: String
+    Default: dev-1
+  RoleARN:
+    Type: String
+    Default: "arn:aws:iam::637423634948:role/LabRole"
+
+Resources:
+  #Job Posts table Creation with stage defined
+  JobPostsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "job-posts-table-${Stage}"
+      AttributeDefinitions:
+        - AttributeName: jobPostId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: jobPostId
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+
+  #Job Saved Posts table Creation with stage defined
+  JobSavedPostsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "job-saved-posts-table-${Stage}"
+      AttributeDefinitions:
+        - AttributeName: jobSavedPostId
+          AttributeType: S
+        - AttributeName: userId
+          AttributeType: S   # Assuming userId is a string type. Change it accordingly if it's a different type.
+        - AttributeName: jobPostId
+          AttributeType: S   # Assuming jobPostId is a string type. Change it accordingly if it's a different type.
+      KeySchema:
+        - AttributeName: jobSavedPostId
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+      GlobalSecondaryIndexes:
+        - IndexName: UserIdIndex
+          KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+            - AttributeName: jobPostId
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL  # Adjust projection type as per your requirements
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1
+
+
+  #Common Rest API Gateway for complete backend application.
+  ApiGatewayRestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: job-nest-crud-api
+      ApiKeySourceType: "HEADER"
+      EndpointConfiguration:
+        Types:
+          - "REGIONAL"
+
+  #Get job post function
+  GetJobPostFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: "index.handler"
+      Role: !Sub "${RoleARN}"
+      Runtime: nodejs20.x
+      MemorySize: 128
+      Timeout: 5
+      Environment:
+        Variables:
+          JOB_POSTS_TABLE_NAME: !Ref JobPostsTable
+      Code:
+        ZipFile: |
+          const { DynamoDBClient, GetItemCommand } = require('@aws-sdk/client-dynamodb');
+          const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
+          
+          const db = new DynamoDBClient({ region: process.env.AWS_REGION });
+          
+          exports.handler = async (event) => {
+              const response = {
+                statusCode: 200,
+                headers: {
+                  "Access-Control-Allow-Origin": "*",
+                  "Access-Control-Allow-Headers": "Content-Type",
+                  "Access-Control-Allow-Methods": "OPTIONS,POST"
+                }
+              };
+          
+              try {
+                  const params = {
+                      TableName: process.env.JOB_POSTS_TABLE_NAME,
+                      Key: marshall({ jobPostId: event.queryStringParameters.jobPostId }), // Reading from query parameter
+                  };
+                  const { Item } = await db.send(new GetItemCommand(params));
+          
+                  console.log({ Item });
+                  response.body = JSON.stringify({
+                      message: "Successfully retrieved job post.",
+                      data: (Item) ? unmarshall(Item) : {},
+                  });
+              } catch (e) {
+                  console.error(e);
+                  response.statusCode = 500;
+                  response.body = JSON.stringify({
+                      message: "Failed to get job post.",
+                      errorMsg: e.message,
+                      errorStack: e.stack,
+                  });
+              }
+          
+              return response;
+          };
+
+
+
+
+
+
+
+  #Get job post API Gateway resource
+  ApiGatewayResourceGetJobPost:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+      PathPart: job-post-get
+
+  #Get job post Method
+  ApiGatewayMethodGetJobPost:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ResourceId: !Ref ApiGatewayResourceGetJobPost
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: false
+      RequestParameters:
+        "method.request.path.proxy": true
+      MethodResponses:
+        - StatusCode: "200"
+          ResponseModels:
+            "application/json": "Empty"
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,token'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+      Integration:
+        CacheNamespace: !Ref ApiGatewayResourceGetJobPost
+        IntegrationHttpMethod: "POST"
+        Type: "AWS_PROXY"
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetJobPostFunction.Arn}/invocations"
+        PassthroughBehavior: "WHEN_NO_MATCH"
+        IntegrationResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,token'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+          ResponseTemplates: { }
+
+  #Get job post Lambda Permission
+  GetJobPostFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt GetJobPostFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/*/*"
+
+  #Create job post function
+  CreateJobPostFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: "index.createJobPost"
+      Role: !Sub "${RoleARN}"
+      Runtime: nodejs20.x
+      MemorySize: 128
+      Timeout: 5
+      Environment:
+        Variables:
+          JOB_POSTS_TABLE_NAME: !Ref JobPostsTable
+      Code:
+        ZipFile: |
+          const { DynamoDBClient, PutItemCommand } = require('@aws-sdk/client-dynamodb');
+          const { marshall } = require('@aws-sdk/util-dynamodb');
+          
+          const db = new DynamoDBClient({ region: process.env.AWS_REGION });
+          
+          exports.createJobPost = async (event) => {
+              const response = {
+                statusCode: 200,
+                headers: {
+                  "Access-Control-Allow-Origin": "*",
+                  "Access-Control-Allow-Headers": "Content-Type",
+                  "Access-Control-Allow-Methods": "OPTIONS,POST"
+                }
+              };
+          
+              try {
+                  const body = event.queryStringParameters;
+                  const params = {
+                      TableName: process.env.JOB_POSTS_TABLE_NAME,
+                      Item: marshall(body || {}),
+                  };
+                  const createResult = await db.send(new PutItemCommand(params));
+          
+                  response.body = JSON.stringify({
+                      message: "Successfully created job post.",
+                      createResult,
+                  });
+              } catch (e) {
+                  console.error(e);
+                  response.statusCode = 500;
+                  response.body = JSON.stringify({
+                      message: "Failed to create job post.",
+                      errorMsg: e.message,
+                      errorStack: e.stack,
+                  });
+              }
+          
+              return response;
+          };
+
+
+
+  #Create job post API Gateway resource
+  ApiGatewayResourceCreateJobPost:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+      PathPart: job-post-create
+
+  #Create job post Method
+  ApiGatewayMethodCreateJobPost:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ResourceId: !Ref ApiGatewayResourceCreateJobPost
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: false
+      RequestParameters:
+        "method.request.path.proxy": true
+      MethodResponses:
+        - StatusCode: "200"
+          ResponseModels:
+            "application/json": "Empty"
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,token'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+      Integration:
+        CacheNamespace: !Ref ApiGatewayResourceCreateJobPost
+        IntegrationHttpMethod: "POST"
+        Type: "AWS_PROXY"
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CreateJobPostFunction.Arn}/invocations"
+        PassthroughBehavior: "WHEN_NO_MATCH"
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates: { }
+
+  #Create job post Lambda Permission
+  CreateJobPostFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt CreateJobPostFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/*/*"
+
+  #Update job post function
+  UpdateJobPostFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: "index.updateJobPost"
+      Role: !Sub "${RoleARN}"
+      Runtime: nodejs20.x
+      MemorySize: 128
+      Timeout: 5
+      Environment:
+        Variables:
+          JOB_POSTS_TABLE_NAME: !Ref JobPostsTable
+      Code:
+        ZipFile: |
+          const { DynamoDBClient, UpdateItemCommand } = require('@aws-sdk/client-dynamodb');
+          const { marshall } = require('@aws-sdk/util-dynamodb');
+          
+          const db = new DynamoDBClient({ region: process.env.AWS_REGION });
+          
+          exports.updateJobPost = async (event) => {
+              const response = {
+                statusCode: 200,
+                headers: {
+                  "Access-Control-Allow-Origin": "*",
+                  "Access-Control-Allow-Headers": "Content-Type",
+                  "Access-Control-Allow-Methods": "OPTIONS,POST"
+                }
+              };
+          
+              try {
+                  const body = event.queryStringParameters;
+                  const objKeys = Object.keys(body);
+                  const updatedObjKeys = objKeys.filter(key => key !== 'jobPostId');
+          
+                  const params = {
+                      TableName: process.env.JOB_POSTS_TABLE_NAME,
+                      Key: marshall({ jobPostId: body.jobPostId }),
+                      UpdateExpression: `SET ${updatedObjKeys.map((_, index) => `#key${index} = :value${index}`).join(", ")}`,
+                      ExpressionAttributeNames: updatedObjKeys.reduce((acc, key, index) => ({
+                          ...acc,
+                          [`#key${index}`]: key,
+                      }), {}),
+                      ExpressionAttributeValues: marshall(updatedObjKeys.reduce((acc, key, index) => ({
+                          ...acc,
+                          [`:value${index}`]: body[key],
+                      }), {})),
+                  };
+                  const updateResult = await db.send(new UpdateItemCommand(params));
+          
+                  response.body = JSON.stringify({
+                      message: "Successfully updated job post.",
+                      updateResult,
+                  });
+              } catch (e) {
+                  console.error(e);
+                  response.statusCode = 500;
+                  response.body = JSON.stringify({
+                      message: "Failed to update job post.",
+                      errorMsg: e.message,
+                      errorStack: e.stack,
+                  });
+              }
+          
+              return response;
+          };
+
+
+
+  #Update job post API Gateway resource
+  ApiGatewayResourceUpdateJobPost:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+      PathPart: job-post-update
+
+  #Update job post Method
+  ApiGatewayMethodUpdateJobPost:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ResourceId: !Ref ApiGatewayResourceUpdateJobPost
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: false
+      RequestParameters:
+        "method.request.path.proxy": true
+      MethodResponses:
+        - StatusCode: "200"
+          ResponseModels:
+            "application/json": "Empty"
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,token'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+      Integration:
+        CacheNamespace: !Ref ApiGatewayResourceUpdateJobPost
+        IntegrationHttpMethod: "POST"
+        Type: "AWS_PROXY"
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UpdateJobPostFunction.Arn}/invocations"
+        PassthroughBehavior: "WHEN_NO_MATCH"
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates: { }
+
+  #Update job post Lambda Permission
+  UpdateJobPostFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt UpdateJobPostFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/*/*"
+
+  # Delete job post function
+  DeleteJobPostFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: "index.deleteJobPost"
+      Role: !Sub "${RoleARN}"
+      Runtime: nodejs20.x
+      MemorySize: 128
+      Timeout: 5
+      Environment:
+        Variables:
+          JOB_POSTS_TABLE_NAME: !Ref JobPostsTable
+      Code:
+        ZipFile: |
+          const { DynamoDBClient, DeleteItemCommand } = require('@aws-sdk/client-dynamodb');
+          const { marshall } = require('@aws-sdk/util-dynamodb');
+
+          const db = new DynamoDBClient({ region: process.env.AWS_REGION });
+
+          exports.deleteJobPost = async (event) => {
+              const response = {
+                statusCode: 200,
+                headers: {
+                  "Access-Control-Allow-Origin": "*",
+                  "Access-Control-Allow-Headers": "Content-Type",
+                  "Access-Control-Allow-Methods": "OPTIONS,POST"
+                }
+              };
+
+              try {
+                  const body = event.queryStringParameters;
+                  const params = {
+                      TableName: process.env.JOB_POSTS_TABLE_NAME,
+                      Key: marshall({ jobPostId: body.jobPostId }),
+                  };
+                  const deleteResult = await db.send(new DeleteItemCommand(params));
+
+                  response.body = JSON.stringify({
+                      message: "Successfully deleted job post.",
+                      deleteResult,
+                  });
+              } catch (e) {
+                  console.error(e);
+                  response.statusCode = 500;
+                  response.body = JSON.stringify({
+                      message: "Failed to delete job post.",
+                      errorMsg: e.message,
+                      errorStack: e.stack,
+                  });
+              }
+
+              return response;
+          };
+
+
+  # Delete job post API Gateway resource
+  ApiGatewayResourceDeleteJobPost:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+      PathPart: job-post-delete
+
+  # Delete job post Method
+  ApiGatewayMethodDeleteJobPost:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ResourceId: !Ref ApiGatewayResourceDeleteJobPost
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: false
+      RequestParameters:
+        "method.request.path.proxy": true
+      MethodResponses:
+        - StatusCode: "200"
+          ResponseModels:
+            "application/json": "Empty"
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,token'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+      Integration:
+        CacheNamespace: !Ref ApiGatewayResourceDeleteJobPost
+        IntegrationHttpMethod: "POST"
+        Type: "AWS_PROXY"
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DeleteJobPostFunction.Arn}/invocations"
+        PassthroughBehavior: "WHEN_NO_MATCH"
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates: { }
+
+  # Delete job post Lambda Permission
+  DeleteJobPostFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt DeleteJobPostFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/*/*"
+
+  # Get all job posts function
+  GetAllJobPostsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: "index.getAllJobPosts"
+      Role: !Sub "${RoleARN}"
+      Runtime: nodejs20.x
+      MemorySize: 128
+      Timeout: 5
+      Environment:
+        Variables:
+          JOB_POSTS_TABLE_NAME: !Ref JobPostsTable
+      Code:
+        ZipFile: |
+          const { DynamoDBClient, ScanCommand } = require('@aws-sdk/client-dynamodb');
+          const { unmarshall } = require('@aws-sdk/util-dynamodb');
+
+          const db = new DynamoDBClient({ region: process.env.AWS_REGION });
+
+          exports.getAllJobPosts = async () => {
+              const response = {
+                statusCode: 200,
+                headers: {
+                  "Access-Control-Allow-Origin": "*",
+                  "Access-Control-Allow-Headers": "Content-Type",
+                  "Access-Control-Allow-Methods": "OPTIONS,POST"
+                }
+              };
+
+              try {
+                  const { Items } = await db.send(new ScanCommand({ TableName: process.env.JOB_POSTS_TABLE_NAME }));
+
+                  response.body = JSON.stringify({
+                      message: "Successfully retrieved all posts.",
+                      data: Items.map((item) => unmarshall(item)),
+                  });
+              } catch (e) {
+                  console.error(e);
+                  response.statusCode = 500;
+                  response.body = JSON.stringify({
+                      message: "Failed to retrieve posts.",
+                      errorMsg: e.message,
+                      errorStack: e.stack,
+                  });
+              }
+
+              return response;
+          };
+
+
+
+
+  # Get all job posts API Gateway resource
+  ApiGatewayResourceGetAllJobPosts:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+      PathPart: job-posts
+
+  # Get all job posts Method
+  ApiGatewayMethodGetAllJobPosts:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ResourceId: !Ref ApiGatewayResourceGetAllJobPosts
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: false
+      RequestParameters:
+        "method.request.path.proxy": true
+      MethodResponses:
+        - StatusCode: "200"
+          ResponseModels:
+            "application/json": "Empty"
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,token'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+      Integration:
+        CacheNamespace: !Ref ApiGatewayResourceGetAllJobPosts
+        IntegrationHttpMethod: "POST"
+        Type: "AWS_PROXY"
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetAllJobPostsFunction.Arn}/invocations"
+        PassthroughBehavior: "WHEN_NO_MATCH"
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates: { }
+
+  # Get all job posts Lambda Permission
+  GetAllJobPostsFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt GetAllJobPostsFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/*/*"
+
+  # Get all save job posts function
+  GetSavedJobPostsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: "index.getSavedJobPostsFunction"
+      Role: !Sub "${RoleARN}"
+      Runtime: nodejs20.x
+      MemorySize: 128
+      Timeout: 5
+      Environment:
+        Variables:
+          JOB_SAVED_POSTS_TABLE_NAME: !Ref JobSavedPostsTable
+      Code:
+        ZipFile: |
+          const { DynamoDBClient, ScanCommand } = require('@aws-sdk/client-dynamodb');
+          const { unmarshall } = require('@aws-sdk/util-dynamodb');
+
+          const db = new DynamoDBClient({ region: process.env.AWS_REGION });
+
+          exports.getSavedJobPostsFunction = async (event) => {
+
+              const eventBody = event.queryStringParameters;
+              const response = {
+                statusCode: 200,
+                headers: {
+                  "Access-Control-Allow-Origin": "*",
+                  "Access-Control-Allow-Headers": "Content-Type",
+                  "Access-Control-Allow-Methods": "*"
+                }
+              };
+
+              try {
+                      // Define the parameters for the ScanCommand
+                  const params = {
+                    TableName: process.env.JOB_SAVED_POSTS_TABLE_NAME,
+                    FilterExpression: 'userId = :userId',
+                    ExpressionAttributeValues: {
+                      ':userId': { S: eventBody.userId }
+                    }
+                  };
+          
+                  const data = await db.send(new ScanCommand(params));
+
+                  // Convert the DynamoDB items to a plain JavaScript object
+                  const items = data.Items.map(item => unmarshall(item));
+
+                 // Set the response body
+                  response.body = JSON.stringify({
+                          message: "Successfully retrieved items.",
+                          data: items
+                  });
+              } catch (e) {
+                  console.error(e);
+                  response.statusCode = 500;
+                  response.body = JSON.stringify({
+                      message: "Failed to retrieve posts.",
+                      errorMsg: e.message,
+                      errorStack: e.stack,
+                  });
+              }
+
+              return response;
+          };
+
+
+
+
+  # Get save  all job posts API Gateway resource
+  ApiGatewayResourceGetSavedJobPosts:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+      PathPart: saved-job-posts
+
+  # Get save all job posts Method
+  ApiGatewayMethodGetSavedJobPosts:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ResourceId: !Ref ApiGatewayResourceGetSavedJobPosts
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: false
+      RequestParameters:
+        "method.request.path.proxy": true
+      MethodResponses:
+        - StatusCode: "200"
+          ResponseModels:
+            "application/json": "Empty"
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,token'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+      Integration:
+        CacheNamespace: !Ref ApiGatewayResourceGetSavedJobPosts
+        IntegrationHttpMethod: "POST"
+        Type: "AWS_PROXY"
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetSavedJobPostsFunction.Arn}/invocations"
+        PassthroughBehavior: "WHEN_NO_MATCH"
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates: { }
+
+  # Get save all job posts Lambda Permission
+  GetSavedJobPostsFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt GetSavedJobPostsFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/*/*"
+
+  #Create Saved job post function
+  CreateSavedJobPostFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: "index.createSavedJobPostFunction"
+      Role: !Sub "${RoleARN}"
+      Runtime: nodejs20.x
+      MemorySize: 128
+      Timeout: 5
+      Environment:
+        Variables:
+          JOB_SAVED_POSTS_TABLE_NAME: !Ref JobSavedPostsTable
+      Code:
+        ZipFile: |
+          const { DynamoDBClient, PutItemCommand } = require('@aws-sdk/client-dynamodb');
+          const { marshall } = require('@aws-sdk/util-dynamodb');
+
+          const db = new DynamoDBClient({ region: process.env.AWS_REGION });
+
+          exports.createSavedJobPostFunction = async (event) => {
+              const response = {
+                statusCode: 200,
+                headers: {
+                  "Access-Control-Allow-Origin": "*",
+                  "Access-Control-Allow-Headers": "Content-Type",
+                  "Access-Control-Allow-Methods": "OPTIONS,POST"
+                }
+              };
+
+              try {
+                  const body = event.queryStringParameters;
+                  const params = {
+                      TableName: process.env.JOB_SAVED_POSTS_TABLE_NAME,
+                      Item: marshall(body || {}),
+                  };
+                  const createResult = await db.send(new PutItemCommand(params));
+
+                  response.body = JSON.stringify({
+                      message: "Successfully created saved job post.",
+                      createResult,
+                  });
+              } catch (e) {
+                  console.error(e);
+                  response.statusCode = 500;
+                  response.body = JSON.stringify({
+                      message: "Failed to create saved job post.",
+                      errorMsg: e.message,
+                      errorStack: e.stack,
+                  });
+              }
+
+              return response;
+          };
+
+
+
+
+
+
+  #Create Saved job post API Gateway resource
+  ApiGatewayResourceCreateSavedJobPost:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+      PathPart: job-saved-post-create
+
+  #Create Saved job post Method
+  ApiGatewayMethodCreateSavedJobPost:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ResourceId: !Ref ApiGatewayResourceCreateSavedJobPost
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: false
+      RequestParameters:
+        "method.request.path.proxy": true
+      MethodResponses:
+        - StatusCode: "200"
+          ResponseModels:
+            "application/json": "Empty"
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,token'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+      Integration:
+        CacheNamespace: !Ref ApiGatewayResourceCreateSavedJobPost
+        IntegrationHttpMethod: "POST"
+        Type: "AWS_PROXY"
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CreateSavedJobPostFunction.Arn}/invocations"
+        PassthroughBehavior: "WHEN_NO_MATCH"
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates: { }
+
+  #Create Saved job post Lambda Permission
+  CreateSavedJobPostFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt CreateSavedJobPostFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/*/*"
+
+  # Delete Saved job post function
+  DeleteSavedJobPostFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: "index.deleteSavedJobPost"
+      Role: !Sub "${RoleARN}"
+      Runtime: nodejs20.x
+      MemorySize: 128
+      Timeout: 5
+      Environment:
+        Variables:
+          JOB_SAVED_POSTS_TABLE_NAME: !Ref JobSavedPostsTable
+      Code:
+        ZipFile: |
+          const { DynamoDBClient, DeleteItemCommand } = require('@aws-sdk/client-dynamodb');
+          const { marshall } = require('@aws-sdk/util-dynamodb');
+
+          const db = new DynamoDBClient({ region: process.env.AWS_REGION });
+
+          exports.deleteSavedJobPost = async (event) => {
+              const response = {
+                statusCode: 200,
+                headers: {
+                  "Access-Control-Allow-Origin": "*",
+                  "Access-Control-Allow-Headers": "Content-Type",
+                  "Access-Control-Allow-Methods": "OPTIONS,POST"
+                }
+              };
+              try {
+                  const body = event.queryStringParameters;
+                  const params = {
+                      TableName: process.env.JOB_SAVED_POSTS_TABLE_NAME,
+                      Key: marshall({ jobSavedPostId: body.jobSavedPostId}),
+                  };
+                  const deleteResult = await db.send(new DeleteItemCommand(params));
+
+                  response.body = JSON.stringify({
+                      message: "Successfully deleted Saved job post.",
+                      deleteResult,
+                  });
+              } catch (e) {
+                  console.error(e);
+                  response.statusCode = 500;
+                  response.body = JSON.stringify({
+                      message: "Failed to delete Saved job post.",
+                      errorMsg: e.message,
+                      errorStack: e.stack,
+                  });
+              }
+
+              return response;
+          };
+
+
+
+
+
+  # Delete job post API Gateway resource
+  ApiGatewayResourceDeleteSavedJobPost:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+      PathPart: job-saved-post-delete
+
+  # Delete job post Method
+  ApiGatewayMethodDeleteSavedJobPost:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ResourceId: !Ref ApiGatewayResourceDeleteSavedJobPost
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: false
+      RequestParameters:
+        "method.request.path.proxy": true
+      MethodResponses:
+        - StatusCode: "200"
+          ResponseModels:
+            "application/json": "Empty"
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,token'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+      Integration:
+        CacheNamespace: !Ref ApiGatewayResourceDeleteSavedJobPost
+        IntegrationHttpMethod: "POST"
+        Type: "AWS_PROXY"
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DeleteSavedJobPostFunction.Arn}/invocations"
+        PassthroughBehavior: "WHEN_NO_MATCH"
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates: { }
+
+  # Delete job post Lambda Permission
+  DeleteSavedJobPostFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt DeleteSavedJobPostFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/*/*"
+
+  #API Gateway Deployment to stage.
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ApiGatewayMethodGetJobPost
+      - ApiGatewayMethodCreateJobPost
+      - ApiGatewayMethodUpdateJobPost
+      - ApiGatewayMethodGetAllJobPosts
+      - ApiGatewayMethodDeleteJobPost
+      - ApiGatewayMethodDeleteSavedJobPost
+      - ApiGatewayMethodGetSavedJobPosts
+      - ApiGatewayMethodCreateSavedJobPost
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      StageName: !Ref Stage

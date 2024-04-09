@@ -1,0 +1,124 @@
+AWSTemplateFormatVersion: '2024-04-01'
+Description: JobNestUbuntu
+
+Resources:
+  JobNestEC2SecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "job-nest-repo-security-group"
+      GroupName: "job-nest-repo-security-group"
+      VpcId: "vpc-0910807bd86278792"
+      SecurityGroupIngress:
+      -
+        CidrIp: "0.0.0.0/0"
+        FromPort: 80
+        IpProtocol: "tcp"
+        ToPort: 80
+      -
+        CidrIp: "0.0.0.0/0"
+        FromPort: 22
+        IpProtocol: "tcp"
+        ToPort: 22
+      -
+        CidrIp: "0.0.0.0/0"
+        FromPort: 3000
+        IpProtocol: "tcp"
+        ToPort: 3000
+      SecurityGroupEgress:
+      -
+        CidrIp: "0.0.0.0/0"
+        IpProtocol: "-1"
+
+  JobNestEC2Instance:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      ImageId: "ami-0cd59ecaf368e5ccf"
+      InstanceType: "t3.large"
+      KeyName: "job-keys"
+      AvailabilityZone: !Sub "${AWS::Region}a"
+      Tenancy: "default"
+      SubnetId: "subnet-0dcea512f7c6734a8"
+      EbsOptimized: true
+      SecurityGroupIds:
+      - !Ref JobNestEC2SecurityGroup
+      SourceDestCheck: true
+      BlockDeviceMappings:
+      -
+        DeviceName: "/dev/sdf"
+        Ebs:
+          Encrypted: false
+          VolumeSize: 8
+          SnapshotId: "snap-0d4808a4a367518ba"
+          VolumeType: "gp2"
+          DeleteOnTermination: true
+      Tags:
+      -
+        Key: "Name"
+        Value: "job-nest-ec2-instance"
+      HibernationOptions:
+        Configured: false
+      CpuOptions:
+        CoreCount: 1
+        ThreadsPerCore: 2
+      EnclaveOptions:
+        Enabled: false
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          sudo apt-get update -y
+          sudo apt install npm -y
+          sudo npm install -g npm@latest
+          curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
+          sudo apt install -y nodejs
+          sudo apt install nginx -y
+          sudo mkdir /var/www/html/my-react-app
+          echo 'server {
+            listen 80;
+            listen [::]:80;
+            root /var/www/html/my-react-app/build;
+
+            #react app
+            location / {
+              try_files $uri /index.html;
+            }
+          }' | sudo tee /etc/nginx/conf.d/react.conf >/dev/null
+          cd /home/ubuntu
+          mkdir my-app
+          cd my-app
+          sudo git clone https://github.com/nikul014/reactjs.git
+          cd reactjs
+          sudo npm install
+          sudo npm audit fix --force
+          sudo npm run build
+          sudo cp -R build/ /var/www/html/my-react-app/
+          echo '
+          user www-data;
+          worker_processes auto;
+          pid /run/nginx.pid;
+          include /etc/nginx/modules-enabled/*.conf;
+
+          events {
+            worker_connections 768;
+          }
+
+          http {
+            sendfile on;
+            tcp_nopush on;
+            tcp_nodelay on;
+            keepalive_timeout 65;
+            types_hash_max_size 2048;
+
+            include /etc/nginx/mime.types;
+            default_type application/octet-stream;
+
+            ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3; # Dropping SSLv3, ref: POODLE
+            ssl_prefer_server_ciphers on;
+
+            access_log /var/log/nginx/access.log;
+            error_log /var/log/nginx/error.log;
+
+            gzip on;
+
+            include /etc/nginx/conf.d/*.conf;
+          }' | sudo tee /etc/nginx/nginx.conf >/dev/null
+          sudo nginx -t && sudo systemctl reload nginx

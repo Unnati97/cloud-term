@@ -1,0 +1,344 @@
+AWSTemplateFormatVersion: '2024-04-01'
+Description: Authentication
+
+#Predefine parameters
+Parameters:
+  Stage:
+    Type: String
+    Default: test
+  RoleARN:
+    Type: String
+    Default: "arn:aws:iam::637423634948:role/LabRole"
+
+Resources:
+  #Job Posts table Creation with stage defined
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "users-${Stage}"
+      AttributeDefinitions:
+        - AttributeName: 'userid'
+          AttributeType: 'S'
+        - AttributeName: 'username'
+          AttributeType: 'S'
+      KeySchema:
+        - AttributeName: 'userid'
+          KeyType: 'HASH'
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      GlobalSecondaryIndexes:
+        - IndexName: 'username-index'
+          KeySchema:
+            - AttributeName: 'username'
+              KeyType: 'HASH'
+          Projection:
+            ProjectionType: 'ALL'
+          ProvisionedThroughput:
+            ReadCapacityUnits: 5
+            WriteCapacityUnits: 5
+
+  #Common Rest API Gateway for complete backend application.
+  ApiGatewayRestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: job-nest-crud-api-users
+      ApiKeySourceType: "HEADER"
+      EndpointConfiguration:
+        Types:
+          - "REGIONAL"
+
+  #Get login Lambda function
+  GetLoginFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: "index.handler"
+      Role: !Sub "${RoleARN}"
+      Runtime: nodejs20.x
+      MemorySize: 128
+      Timeout: 5
+      Environment:
+        Variables:
+          USERS_TABLE_NAME: !Ref UsersTable
+      Code:
+        ZipFile: |
+          const { DynamoDBClient, GetItemCommand, ScanCommand } = require('@aws-sdk/client-dynamodb');
+          const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
+          
+          const db = new DynamoDBClient({ region: process.env.AWS_REGION });
+          
+          exports.handler = async (event) => {
+              const response = {
+                statusCode: 200,
+                headers: {
+                  "Access-Control-Allow-Origin": "*",
+                  "Access-Control-Allow-Headers": "Content-Type",
+                  "Access-Control-Allow-Methods": "*"
+                }
+              };
+          
+              try {
+                  const eventBody = event.queryStringParameters;
+          
+                  const params = {
+                      TableName: process.env.USERS_TABLE_NAME,
+                      FilterExpression: 'username = :username',
+                      ExpressionAttributeValues: {
+                          ':username': { S: eventBody.username }
+                      }
+                  };
+          
+                  const Item = await db.send(new ScanCommand(params));
+          
+                  console.log({ Item });
+          
+                  if (Item.Items.length === 0) {
+                    return {
+                      statusCode: 404,
+                      headers: {
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Headers": "Content-Type",
+                        "Access-Control-Allow-Methods": "*"
+                      },
+                      body: JSON.stringify({ message: 'User not found' }),
+                    };
+                  }
+                  const user = unmarshall(Item.Items[0]);
+          
+                  if (user.password !== eventBody.password) {
+                    return {
+                      statusCode: 401,
+                      headers: {
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Headers": "Content-Type",
+                        "Access-Control-Allow-Methods": "*"
+                      },
+                      body: JSON.stringify({ message: 'Invalid password' })
+                    };
+                  }
+          
+                  response.body = JSON.stringify({
+                      message: "Successfully retrieved user.",
+                      data: user,
+                  });
+              } catch (e) {
+                  console.error(e);
+                  response.statusCode = 500;
+                  response.body = JSON.stringify({
+                      message: "Failed to get job post.",
+                      errorMsg: e.message,
+                      errorStack: e.stack,
+                  });
+              }
+              return response;
+          };
+    
+
+
+
+  #Get login gateway resource
+  ApiGatewayResourceLogin:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+      PathPart: login-user
+
+  #Get login Method
+  ApiGatewayMethodLogin:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ResourceId: !Ref ApiGatewayResourceLogin
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: false
+      RequestParameters:
+        "method.request.path.proxy": true
+      MethodResponses:
+        - StatusCode: "200"
+          ResponseModels:
+            "application/json": "Empty"
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,token'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+      Integration:
+        CacheNamespace: !Ref ApiGatewayResourceLogin
+        IntegrationHttpMethod: "POST"
+        Type: "AWS_PROXY"
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetLoginFunction.Arn}/invocations"
+        PassthroughBehavior: "WHEN_NO_MATCH"
+        IntegrationResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,token'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+          ResponseTemplates: { }
+
+  #Get login Lambda Permission
+  GetLoginFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt GetLoginFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/*/*"
+
+  #Create user function
+  SignUpFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: "index.signUp"
+      Role: !Sub "${RoleARN}"
+      Runtime: nodejs20.x
+      MemorySize: 128
+      Timeout: 5
+      Environment:
+        Variables:
+          USERS_TABLE_NAME: !Ref UsersTable
+      Code:
+        ZipFile: |
+          const { DynamoDBClient, ScanCommand, PutItemCommand  } = require('@aws-sdk/client-dynamodb');
+          const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
+
+          const db = new DynamoDBClient({ region: process.env.AWS_REGION });
+
+          exports.signUp = async (event) => {
+              const response = {
+                statusCode: 200,
+                headers: {
+                  "Access-Control-Allow-Origin": "*",
+                  "Access-Control-Allow-Headers": "Content-Type",
+                  "Access-Control-Allow-Methods": "OPTIONS,POST"
+                }
+              };
+
+              try {
+                  const eventBody = event.queryStringParameters;
+                  // Check if the username already exists
+                  const existingUser = await getUserByUsername(eventBody.username);
+                  if (existingUser) {
+                    response.body = JSON.stringify({ message: 'Username already exists' });
+                    return response;
+                  }
+
+                  const currentTimeInMilliseconds = Date.now();
+                  const nanoseconds = process.hrtime.bigint().toString().padStart(9, '0');
+                  const userId = `${currentTimeInMilliseconds}${nanoseconds}`;
+
+                  // Create the user object
+                  const user = {
+                        userid: userId,
+                        username: eventBody.username,
+                        password: eventBody.password,
+                        firstName:eventBody. firstName,
+                        lastName: eventBody.lastName
+                  };
+
+                  // Save the user to DynamoDB
+                  // Put the user item into DynamoDB
+                  const params = {
+                      TableName: process.env.USERS_TABLE_NAME,
+                      Item: marshall(user)
+                  };
+
+                  await db.send(new PutItemCommand(params));
+
+                  response.body = JSON.stringify({
+                      message: "Successfully sign up."
+                  });
+              } catch (e) {
+                  console.error(e);
+                  response.statusCode = 500;
+                  response.body = JSON.stringify({
+                      message: "Failed to create job post.",
+                      errorMsg: e.message,
+                      errorStack: e.stack,
+                  });
+              }
+
+              return response;
+          };
+
+          async function getUserByUsername(username) {
+             try {
+                  const params = {
+                      TableName: process.env.USERS_TABLE_NAME,
+                      FilterExpression: 'username = :username',
+                      ExpressionAttributeValues: {
+                          ':username': { S: username }
+                      }
+                  };
+
+                  const data = await db.send(new ScanCommand(params));
+                  return data.Items.length > 0 ? unmarshall(data.Items[0]) : null;
+              } catch (error) {
+                  console.error("Error fetching user by username:", error);
+                  throw error;
+              }
+          }
+  
+
+
+
+  #Create user API Gateway resource
+  ApiGatewayResourceSignUp:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+      PathPart: signup-user
+
+  #Create user Method
+  ApiGatewayMethodSignUp:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ResourceId: !Ref ApiGatewayResourceSignUp
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: false
+      RequestParameters:
+        "method.request.path.proxy": true
+      MethodResponses:
+        - StatusCode: "200"
+          ResponseModels:
+            "application/json": "Empty"
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,token'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+      Integration:
+        CacheNamespace: !Ref ApiGatewayResourceSignUp
+        IntegrationHttpMethod: "POST"
+        Type: "AWS_PROXY"
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SignUpFunction.Arn}/invocations"
+        PassthroughBehavior: "WHEN_NO_MATCH"
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates: { }
+
+  #Create user Lambda Permission
+  SignUpFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt SignUpFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/*/*"
+
+  #API Gateway Deployment to stage.
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ApiGatewayMethodLogin
+      - ApiGatewayMethodSignUp
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      StageName: !Ref Stage

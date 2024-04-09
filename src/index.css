@@ -1,0 +1,155 @@
+@import url("https://fonts.googleapis.com/css?family=Fira+Sans:400,500,600,700,800");
+
+* {
+  box-sizing: border-box;
+}
+body {
+  background-color: var(--backgroundBody) !important;
+  min-height: 100vh;
+  display: flex;
+  font-weight: 400;
+  font-family: "Fira Sans", sans-serif;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+label,
+span {
+  font-weight: 500;
+  font-family: "Fira Sans", sans-serif;
+}
+
+body,
+html,
+.App,
+#root,
+.auth-wrapper {
+  width: 100%;
+  height: 100%;
+}
+
+.navbar-light {
+  background-color: var(--primary);
+  box-shadow: 0px 14px 80px rgba(34, 35, 58, 0.2);
+  height: 65px;
+}
+
+.nav-link {
+  color: var(--textColor) !important;
+}
+
+.auth-wrapper {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+}
+
+.auth-inner {
+  margin-left: -10%;
+  margin-right: 5%;
+}
+
+.auth-inner-search {
+  width: 1300px;
+  /* margin-top: -500px; */
+  margin-left: auto;
+  margin-right: auto;
+  background: #ffffff;
+  box-shadow: 0px 14px 80px rgba(34, 35, 58, 0.2);
+  padding: 7px 7px 7px 7px;
+  border-radius: 5px;
+}
+.auth-inner-list {
+  width: 1300px;
+  margin-left: auto;
+  margin-right: auto;
+  padding: 7px 7px 7px 7px;
+}
+
+.auth-wrapper .form-control:focus {
+  border-color: var(--authWraperBorder);
+  box-shadow: none;
+}
+
+.auth-wrapper h3 {
+  text-align: center;
+  margin: 0;
+  line-height: 1;
+  padding-bottom: 20px;
+}
+
+.custom-control-label {
+  font-weight: 400;
+}
+
+.show-password-icon {
+  margin-top: -5%;
+  float: right;
+  width: 5%;
+}
+
+.login-register-page {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  align-content: center;
+}
+
+.login-register-overflow {
+  overflow: hidden;
+}
+
+
+.text-highlight {
+  background-color: var(--textHighlightColor);
+  border: 1px solid var(--textHighlightBGColor);
+  padding: 3px;
+  font-size: small;
+  display: inline-block;
+  border-radius: 3px;
+}
+
+.login-register-image {
+  background-color: var(--logRegImage);
+  height: max-content;
+  min-height: 100vh;
+  text-align: center;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
+
+.button-style{
+  background:  var(--primary) !important;
+  color:  var(--textColor) !important;
+}
+
+.profile-wrapper {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+}
+
+.profile-inner {
+  width: 450px;
+  margin: auto;
+  background: #ffffff;
+  box-shadow: 0px 14px 80px rgba(34, 35, 58, 0.2);
+  padding: 40px 55px 45px 55px;
+  border-radius: 15px;
+  transition: all .3s;
+}
+/* 
+.limited-lines {
+  overflow: hidden;
+  text-overflow: 'ellipsis'; 
+  display: '-webkit-box', 
+  web: 3, 
+  WebkitBoxOrient: 'vertical'
+} */

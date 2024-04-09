@@ -1,0 +1,164 @@
+AWSTemplateFormatVersion: '2024-04-01'
+Description: SNSServices
+
+#Predefine parameters
+Parameters:
+  Stage:
+    Type: String
+    Default: test
+  RoleARN:
+    Type: String
+    Default: "arn:aws:iam::637423634948:role/LabRole"
+
+Resources:
+  SNSTopic:
+    Type: 'AWS::SNS::Topic'
+    Properties:
+      DisplayName: 'jobPostCreatedTopic'
+
+  SNSLambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: 'index.createAndBroadcast'
+      Role: !Sub '${RoleARN}'
+      Runtime: nodejs20.x
+      MemorySize: 128
+      Timeout: 5
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref SNSTopic
+      Code:
+        ZipFile: |
+          const { SNSClient, PublishCommand, SubscribeCommand } = require("@aws-sdk/client-sns");
+          const snsClient = new SNSClient({ region: process.env.AWS_REGION }); // Replace 'your-region' with your AWS region
+
+          exports.createAndBroadcast = async (event) => {
+              const response = {
+                statusCode: 200,
+                headers: {
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Allow-Headers': 'Content-Type',
+                  'Access-Control-Allow-Methods': '*'
+                }
+              };
+
+              try {
+                  const body = event.queryStringParameters;
+                  const action = body.action;
+
+                  if (action === 'subscribe') {
+                      const email = body.email;
+                      const subscribeParams = {
+                          Protocol: 'email',
+                          Endpoint: email,
+                          TopicArn: process.env.SNS_TOPIC_ARN
+                      };
+                      await snsClient.send(new SubscribeCommand(subscribeParams));
+
+                      response.body = JSON.stringify({
+                          message: 'Subscribed to topic successfully'
+                      });
+                  } else if (action === 'broadcast') {
+                      const message = body.message;
+                      const subject = body.subject || 'Default Subject'; // Use default subject if not provided
+                      const publishParams = {
+                        TopicArn: process.env.SNS_TOPIC_ARN,
+                        Message: message,
+                        Subject: subject
+                      };
+                      await snsClient.send(new PublishCommand(publishParams));
+
+                      response.body = JSON.stringify({
+                          message: 'Message broadcasted successfully'
+                      });
+                  } else {
+                      throw new Error('Invalid action parameter');
+                  }
+              } catch (e) {
+                  console.error(e);
+                  response.statusCode = 500;
+                  response.body = JSON.stringify({
+                      message: 'Failed to perform action',
+                      error: e.message
+                  });
+              }
+
+              return response;
+          };
+
+
+  #Common Rest API Gateway for complete backend application.
+  ApiGatewayRestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: job-nest-sns-api
+      ApiKeySourceType: "HEADER"
+      EndpointConfiguration:
+        Types:
+          - "REGIONAL"
+
+  ApiGatewayResourceCreateAndBroadcast:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+      PathPart: create-and-broadcast
+
+  ApiGatewayMethodCreateAndBroadcast:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ResourceId: !Ref ApiGatewayResourceCreateAndBroadcast
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: false
+      RequestParameters:
+        method.request.header.Content-Type: true
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseModels:
+            application/json: 'Empty'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+            method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST'"
+      Integration:
+        CacheNamespace: !Ref ApiGatewayResourceCreateAndBroadcast
+        IntegrationHttpMethod: 'POST'
+        Type: 'AWS_PROXY'
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SNSLambdaFunction.Arn}/invocations'
+        PassthroughBehavior: 'WHEN_NO_MATCH'
+        RequestTemplates:
+          application/json: '{ "statusCode": 200 }'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST'"
+
+  CreateAndBroadcastFunctionInvokePermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt SNSLambdaFunction.Arn
+      Principal: 'apigateway.amazonaws.com'
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/*/create-and-broadcast'
+
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ApiGatewayMethodCreateAndBroadcast
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      StageName: !Ref Stage
+
+Outputs:
+  SNSTopicArn:
+    Description: 'ARN of the SNS topic'
+    Value: !Ref SNSTopic
+
+  APIGatewayEndpoint:
+    Description: 'Endpoint URL of the API Gateway'
+    Value: !Sub 'https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/sns'
+
