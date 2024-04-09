@@ -38,7 +38,7 @@ Resources:
             ReadCapacityUnits: 5
             WriteCapacityUnits: 5
 
-  #Common Rest API Gateway for complete backend application.
+  #Rest API Gateway for complete backend application.
   ApiGatewayRestApi:
     Type: AWS::ApiGateway::RestApi
     Properties:

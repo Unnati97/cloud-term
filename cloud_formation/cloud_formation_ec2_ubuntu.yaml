@@ -32,7 +32,7 @@ Resources:
   JobNestEC2Instance:
     Type: "AWS::EC2::Instance"
     Properties:
-      ImageId: "ami-0cd59ecaf368e5ccf"
+      ImageId: "ami-0cd59ecaf368e5ccf" # ubuntu server
       InstanceType: "t3.large"
       KeyName: "job-keys"
       AvailabilityZone: !Sub "${AWS::Region}a"
@@ -85,7 +85,7 @@ Resources:
           cd /home/ubuntu
           mkdir my-app
           cd my-app
-          sudo git clone https://github.com/nikul014/reactjs.git
+          sudo git clone https://github.com/Unnati97/cloud-term.git
           cd reactjs
           sudo npm install
           sudo npm audit fix --force
