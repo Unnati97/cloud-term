@@ -19,4 +19,4 @@ root.render(
 // to log results (for example: reportWebVitals(console.log))
 // or send to an analytics endpoint. Learn more: https://bit.ly/CRA-vitals
 reportWebVitals();
-export const base_url = 'https://10kuxalmb1.execute-api.us-east-1.amazonaws.com/prod';
+export const base_url = 'https://mqmmjmlima.execute-api.us-east-1.amazonaws.com/demo';
